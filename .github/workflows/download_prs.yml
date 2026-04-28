@@ -1,4 +1,4 @@
-name: Monthly PR Report
+name: Monthly Report
 
 on:
   push:
@@ -30,7 +30,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pandas requests pandas_market_calendars ipython
+          python -m pip install --upgrade pip
+          pip install ./issues_metrics
 
       - name: Download PR data and run analysis script
         env:

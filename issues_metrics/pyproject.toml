@@ -1,0 +1,11 @@
+[project]
+name = "issues_metrics"
+version = "0.1.0"
+dependencies = [
+    "pandas",
+    "requests",
+    "pandas-market-calendars",
+    "matplotlib",
+    "seaborn",
+    "ipython",
+]
