@@ -22,7 +22,7 @@ if __name__ == "__main__":
 
     # run issues report
     # ------------------------------
-    issues_analysis.run_report(
+    issues_analysis.run_main_reports(
         start_date,
         end_date,
         display_tables,
