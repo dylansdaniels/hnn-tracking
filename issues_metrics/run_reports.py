@@ -12,13 +12,13 @@ if __name__ == "__main__":
 
     # run PR report
     # ------------------------------
-    prs_analysis.run_report(
-        end_date,
-        display_tables,
-        style_displayed_tables,
-        save_report_data,
-        overwrite_historical_data,
-    )
+    # prs_analysis.run_report(
+    #     end_date,
+    #     display_tables,
+    #     style_displayed_tables,
+    #     save_report_data,
+    #     overwrite_historical_data,
+    # )
 
     # run issues report
     # ------------------------------

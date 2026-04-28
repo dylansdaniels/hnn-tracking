@@ -36,7 +36,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python issues_metrics/run_reports.py
+          python -m issues_metrics/run_reports.py
 
       - name: Commit updated data
         run: |

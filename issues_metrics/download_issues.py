@@ -298,7 +298,7 @@ if __name__ == "__main__":
     # --> [DEV]
     if "dylandaniels" in os.getcwd():
         manual_start = "2023-08-01"  # U24 start date
-        manual_end = "2025-12-01"
+        manual_end = "2026-04-28"
     # --> [END DEV]
 
     issues_data = get_issues_with_comments(
