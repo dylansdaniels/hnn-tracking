@@ -1,13 +1,11 @@
+# issues_analysis.py
+
+# potential enhancements
+# - the "business_hours_elapsed" function could be vectorized
+
 # %% ----------------------------------------
 # Setup
 # -------------------------------------------
-
-# THINGS TO DO
-# ---------------
-# - centralize the developer list
-# - review plotting funcitons (used Gemini to create those)
-
-# issues_analysis.py
 
 import os
 import pickle
@@ -577,10 +575,22 @@ def process_issues_for_ttr(
         axis=1,
     )
 
-    # Compute time elapsed in business days
-    # ------------------------------
     def business_hours_elapsed(df):
-        # build holiday set
+        """
+        Calculate the business hours elapsed between datetime_opened and ttr_date,
+        subtracting time spent on weekends and holidays
+
+        Parameters:
+        -----------
+        df : pandas.DataFrame
+
+        Returns:
+        --------
+        pandas.DataFrame
+            The initial DataFrame with an additional column for "ttr_hours"
+        """
+
+        # build holiday calendar
         start_holiday = df["datetime_opened"].min().floor("D")
         end_holiday = df["ttr_date"].max().floor("D")
 
@@ -588,23 +598,50 @@ def process_issues_for_ttr(
         holidays = set(cal.holidays(start=start_holiday, end=end_holiday).date)
 
         def calc(row):
+            # get the issue open date and the response date
             start = row["datetime_opened"]
             end = row["ttr_date"]
+
+            # total time elapsed between issue open and response
             raw_elapsed = end - start
 
+            # get all calendar days
             all_dates = pd.date_range(
                 start=start.floor("D"), end=end.floor("D"), freq="D"
             ).date
 
+            # get all holiday/weeksnds
             days_to_exclude = {
                 d for d in all_dates if d.weekday() >= 5 or d in holidays
             }
-            business_delta = raw_elapsed - timedelta(days=len(days_to_exclude))
+
+            # calculate the non-business-day hours to subtract from the total elapsed
+            # time between when the issue was open and the first response
+            total_exclude_time = timedelta(0)
+            for d in days_to_exclude:
+                if d == start.date() and d == end.date():
+                    # start and end day are the same holiday/weekend
+                    total_exclude_time += (end - start)
+                elif d == start.date():
+                    # only the start is on a holiday / weekend
+                    # here we get time between start time and mignight of the next day
+                    next_day_midnight = start.floor("D") + timedelta(days=1)
+                    total_exclude_time += (next_day_midnight - start)
+                elif d == end.date():
+                    # only the end is on a holiday / weekend
+                    # here we get time between midnight and the end time on the same day
+                    total_exclude_time += (end - end.floor("D"))
+                else:
+                    # full holiday / weekends between the start/end dates
+                    total_exclude_time += timedelta(days=1)
+
+            business_delta = raw_elapsed - total_exclude_time
             business_delta = max(business_delta, timedelta(0))
             return round(business_delta.total_seconds() / 3600, 1)
 
         df["ttr_hours"] = df.apply(calc, axis=1)
         return df
+
 
     issues_segmented = business_hours_elapsed(issues_segmented)
     issues_segmented["ttr_days"] = round(issues_segmented["ttr_hours"] / 24, 2)
@@ -2033,6 +2070,7 @@ def run_main_reports():
     )
 
     _ = run_monthly_report(
+        # in progress # --
         start_date=start_date,
         end_date=end_date,
         save_report_data=True,
