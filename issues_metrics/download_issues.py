@@ -288,26 +288,31 @@ def get_issues_with_comments(
 
     return df
 
+def download_issues(
+    rerun_all=False,
+    max_comments=5,
+    manual_start=False,
+    manual_end=False,
+):
 
-# %% ----------------------------------------
-
-if __name__ == "__main__":
-    manual_start = False
-    manual_end = False
-
-    # --> [DEV]
+    # --> [DEV] for local testing
     if "dylandaniels" in os.getcwd():
         manual_start = "2023-08-01"  # U24 start date
-        manual_end = "2026-04-28"
+        manual_end = "2026-12-01"
     # --> [END DEV]
 
     issues_data = get_issues_with_comments(
-        rerun_all=False,
-        max_comments=5,
+        rerun_all=rerun_all,
+        max_comments=max_comments,
         manual_start=manual_start,
         manual_end=manual_end,
     )
 
     issues_data.to_pickle(DATAPATH)
+    print(f"Issues data saved to {DATAPATH}")
 
-# %%
+# %% ----------------------------------------
+
+if __name__ == "__main__":
+    download_issues()
+

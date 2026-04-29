@@ -280,22 +280,30 @@ def get_prs_with_comments(
 
     return df
 
+def download_prs(
+    rerun_all=False,
+    max_comments=5,
+    manual_end=False,
 
-# %% ----------------------------------------
+):
 
-if __name__ == "__main__":
-
-    manual_end = False
-
-    # --> [DEV]
+    # --> [DEV] for local testing
     if "dylandaniels" in os.getcwd():
         manual_end = "2025-12-01"
     # --> [END DEV]
 
     prs_data = get_prs_with_comments(
-        rerun_all=True,
-        max_comments=5,
+        rerun_all=rerun_all,
+        max_comments=max_comments,
         manual_end=manual_end,
     )
 
     prs_data.to_pickle(DATAPATH)
+    print(f"PR data saved to {DATAPATH}")
+
+
+# %% ----------------------------------------
+
+if __name__ == "__main__":
+    download_prs()
+

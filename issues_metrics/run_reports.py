@@ -1,32 +1,56 @@
-from issues_metrics import issues_analysis, prs_analysis
+from issues_metrics import download_issues, download_prs, issues_analysis, prs_analysis
+
+
+def main():
+
+    # Fetch raw data from GitHub
+    # ----------------------------------------
+
+    print("\n"+"#"*50)
+    print("Fetching issues data from GitHub")
+    print("#"*50,"\n")
+    download_issues.download_issues()
+
+    print("\n"+"#"*50)
+    print("Fetching PR data from GitHub")
+    print("#"*50,"\n")
+    download_prs.download_prs()
+
+    # Peprocess raw data for reporting
+    # ----------------------------------------
+
+    dev_usernames = [
+        "stephanie-r-jones",
+        "jasmainak",
+        "ntolley",
+        "rythorpe",
+        "asoplata",
+        "dylansdaniels",
+        "blakecaldwell",
+        "katduecker",
+        "carolinafernandezp",
+        "gtdang",
+        "kmilo9999",
+        "samadpls",
+        "Myrausman",
+        "Chetank99",
+    ]
+
+    print("\n"+"#"*50)
+    print("Processing issues data for report")
+    print("#"*50,"\n")
+    try:
+        issues_analysis.run_main_reports(dev_usernames=dev_usernames)
+    except Exception as e:
+        print(f"Issues Analysis failed: {e}")
+
+    # print("\n"+"#"*50)
+    # print("Processing PR data for report")
+    # print("#"*50,"\n")
+    # try:
+    #     prs_analysis.run_main_reports(dev_usernames=dev_usernames)
+    # except Exception as e:
+    #     print(f"PR Analysis failed: {e}")
 
 if __name__ == "__main__":
-    # set report parameters
-    # ------------------------------
-    start_date = False
-    end_date = False
-    display_tables = True
-    style_displayed_tables = True
-    save_report_data = True
-    overwrite_historical_data = True
-
-    # run PR report
-    # ------------------------------
-    # prs_analysis.run_report(
-    #     end_date,
-    #     display_tables,
-    #     style_displayed_tables,
-    #     save_report_data,
-    #     overwrite_historical_data,
-    # )
-
-    # run issues report
-    # ------------------------------
-    issues_analysis.run_main_reports(
-        start_date,
-        end_date,
-        display_tables,
-        style_displayed_tables,
-        save_report_data,
-        overwrite_historical_data,
-    )
+    main()
