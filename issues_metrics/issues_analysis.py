@@ -3,9 +3,11 @@
 # potential enhancements
 # - the "business_hours_elapsed" function could be vectorized
 
-# %% ----------------------------------------
+# %% [markdown] -----------------------------------------------------------
 # Setup
-# -------------------------------------------
+# -------------------------------------------------------------------------
+
+# %%
 
 import os
 import pickle
@@ -49,12 +51,19 @@ def peek(df, n=1):
     return out
 
 
-# %% ----------------------------------------
-# Data preprocessing
-# -------------------------------------------
+# %% [markdown] -----------------------------------------------------------
+# # Data preprocessing
+# -------------------------------------------------------------------------
 
+# %%
 
 def process_datetime(df, date_cols):
+    """
+    Helper function to parse date(time) columns into cleaned dates / datetimes
+
+    This function parses columns as datetimes, adjusts them to Eastern
+    time, and creates new date/datetime columns
+    """
     for col in date_cols:
         if "date_time" in col:
             name = col.replace("date_time", "datetime_opened")
@@ -81,6 +90,21 @@ def preprocess(
     start_date=False,
     end_date=False,
 ):
+    """
+    Prepare issue data for analysis
+
+    This function formats date fields, labels users as developers or not,
+    removes unnecessary rows, and (optionally) filters the data by a date range
+
+    Args:
+        df: DataFrame with issues pulled from download_issues.py
+        dev_usernames: list of hnn developers
+        start_date: optional start-date filter
+        end_date: optional end-date filter
+
+    Returns:
+        Preprocessed DataFrame for generatign metrics reports
+    """
     df = df.copy()
 
     df = process_datetime(
@@ -190,9 +214,13 @@ def preprocess(
 
     return df
 
+# %% [markdown] -----------------------------------------------------------
+# Metrics
+# -------------------------------------------------------------------------
 
+# %% -------------------------------------
 # number of issues by by username
-# ------------------------------
+# ----------------------------------------
 def issues_by_user(
     df,
     show=True,
@@ -241,12 +269,9 @@ def issues_by_user(
     return
 
 
-# issues_by_user(df)
-
 # %% -------------------------------------
-# Get issues closed / merged
+# Issues closed / merged
 # ----------------------------------------
-
 
 def issue_status_counts(
     data,
@@ -305,7 +330,6 @@ def issue_status_counts(
 # Get issues opened by users
 # ----------------------------------------
 
-
 def issues_opened_by_users(
     df,
     by_dev_status=False,
@@ -358,7 +382,6 @@ def issues_opened_by_users(
 # %% -------------------------------------
 # Get Time to Response Metric
 # ----------------------------------------
-
 
 def process_issues_for_ttr(
     df,
@@ -653,7 +676,6 @@ def process_issues_for_ttr(
 # Time To Response Table
 # ------------------------------
 
-
 def generate_ttr_table(data):
     df = data.copy()
 
@@ -726,10 +748,11 @@ def generate_ttr_table(data):
     return ttr_issues_table
 
 
-# %% ----------------------------------------
+# %% [markdown] -----------------------------------------------------------
 # Define and run reports
-# -------------------------------------------
+# -------------------------------------------------------------------------
 
+# %%
 
 def build_report_tables_from_records(
     df,
@@ -796,7 +819,6 @@ def build_report_tables_from_records(
 # %% ---------------------------
 # Process report data for saving
 # ------------------------------
-
 
 def prep_alltime_data_for_saving(
     start_date,
@@ -998,18 +1020,7 @@ def build_report_tables_from_pickle(
     style_displayed_tables=True,
 ):
     """
-    Build report tables from saved metrics data in a generic way.
-
-    Parameters
-    ----------
-    report_data : pd.DataFrame
-    display_tables : bool
-    style_displayed_tables : bool
-
-    Returns
-    -------
-    dict
-        Dictionary of tables keyed by metric type.
+    Build report tables from saved metrics
     """
     df = report_data.copy()
 
@@ -1083,7 +1094,7 @@ def run_alltime_report(
     ],
 ):
     """
-    Run issues report.
+    Run issues report
 
     Returns
     -------
@@ -1229,18 +1240,28 @@ def run_alltime_report(
     # optionally save report data
     # ------------------------------
 
-    # --- DEV NOTE --- #
-    #  Currently using pickle instead of save_alltime_report_data()
+    # --- [DEV] NOTE --- #
+    #  depracate direct pickling in facot of using save_alltime_report_data
 
     if save_report_data:
+
         report_path = os.path.join(
             "issues_metrics",
             report_name,
         )
 
-        report_data.to_pickle(report_path)
+        # DEPRACATE
+        # report_data.to_pickle(report_path)
+        # print(f"\nReport data saved to {report_path}")
 
-        print(f"\nReport data saved to {report_path}")
+        save_alltime_report_data(
+            hist_report_data=None,
+            new_report_data=report_data,
+            unique_id_cols=None,
+            report_path=report_path,
+            overwrite_historical_data=True,
+        )
+
     # --- END NOTE --- #
 
     return report_data
