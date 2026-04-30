@@ -1,75 +1,32 @@
-# %% ----------------------------------------
-# Setup
-# -------------------------------------------
-
 # prs_analysis.py
+
+# %% [markdown] -----------------------------------------------------------
+# Setup
+# -------------------------------------------------------------------------
+
+# %%
 
 import os
 import pickle
 from datetime import datetime, timedelta
 
-import matplotlib.pyplot as plt
 import pandas as pd
-import seaborn as sns
-from IPython.display import HTML, display
-from pandas.tseries.holiday import USFederalHolidayCalendar
+
+from issues_metrics.issues_analysis import (
+    _assign_ttr_date,
+    _calc_business_hours_elapsed,
+    _identify_self_vs_external_responses,
+    _segment_data_on_comments,
+    process_datetime,
+)
 
 DATAPATH = os.path.join("issues_metrics", "raw_prs_data.pkl")
 
+# %% [markdown] -----------------------------------------------------------
+# # Data preprocessing
+# -------------------------------------------------------------------------
 
-# function to style html tables
-# ------------------------------
-def render_html_table(df):
-    display(HTML(df.to_html(classes="wrapped-table", index=False)))
-    display(
-        HTML("""
-    <style>
-    .wrapped-table {
-        table-layout: fixed;
-        width: auto;
-        word-wrap: break-word;
-    }
-    .wrapped-table td, .wrapped-table th {
-        white-space: normal;
-    }
-    </style>
-    """)
-    )
-
-
-# function to peek at head and tail
-# ------------------------------
-def peek(df, n=1):
-    head = df.head(n)
-    tail = df.tail(n)
-    out = pd.concat([head, tail])
-    return out
-
-
-# %% ----------------------------------------
-# Data preprocessing
-# -------------------------------------------
-
-
-def process_datetime(df, date_cols):
-    for col in date_cols:
-        if "date_time" in col:
-            name = col.replace("date_time", "datetime_opened")
-        else:
-            name = col.replace("date", "datetime")
-
-        df[name] = pd.to_datetime(
-            df[col],
-            utc=True,
-        )
-        df[name] = df[name].dt.tz_convert("US/Eastern")
-        df[name] = df[name].dt.tz_localize(None)
-        df[col] = df[name].dt.date
-
-    # use timezone-corrected datetime_opened for date_opened
-    df["date_opened"] = df["datetime_opened"].dt.date
-
-    return df
+# %%
 
 
 def preprocess(
@@ -78,6 +35,21 @@ def preprocess(
     start_date=False,
     end_date=False,
 ):
+    """
+    Prepare PR data for analysis
+
+    This function formats date fields, labels users as developers or not,
+    removes unnecessary rows, and (optionally) filters the data by a date range
+
+    Args:
+        df: DataFrame with PRs pulled from download_prs.py
+        dev_usernames: list of hnn developers
+        start_date: optional start-date filter
+        end_date: optional end-date filter
+
+    Returns:
+        Preprocessed DataFrame for generating metrics reports
+    """
     df = df.copy()
 
     df = process_datetime(
@@ -128,6 +100,7 @@ def preprocess(
         # clear fields for prs closed
         # after the end_date
         # ------------------------------
+        # Note: need to compare timestampts to handle NaTs properly
         invalid_dateclosed = df.loc[pd.to_datetime(df["datetime_closed"]) >= end_ts][
             "number"
         ].unique()
@@ -199,64 +172,115 @@ def preprocess(
     return df
 
 
-# number of prs by by username
-# ------------------------------
-def prs_by_user(
+def process_prs_for_ttr(
     df,
-    show=True,
-    return_df=False,
+    report_date,
 ):
-    prs_by_user = df[
+
+    """
+    This function segments PRs by response status and calculates
+    time-to-response (TTR) measures
+
+    We apply one of the following labels to each PR:
+        - "no response": no comments exist on the PR
+        - "self comment": only the author has commented
+        - "external comment": someone other than the author has commented
+
+    We then identify the first valid response timestamp, determines the appropriate
+    cutoff date (response date or report date for open PR), and calculate
+    the total business hours elapsed (excluding weekends and holidays)
+
+    Args:
+        df (pd.DataFrame): preprocessed PR data
+        report_date (datetime.date or str): The cutoff date for the report, used
+            as the reference point for open PRs without responses.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing segmented PRs with added columns:
+            - "status": the response status of the PR as of the report date
+            - "ttr_date": the timestamp used for the TTR metric
+            - "ttr_hours": business hours elapsed from PR open to response
+            - "ttr_days": days elapsed from PR open to response
+    """
+
+    # unique non-bot prs
+    # ------------------------------
+    unique_prs = df.drop_duplicates(
         [
             "pr_title",
             "date_opened",
             "username",
         ]
-    ].drop_duplicates()
-
-    prs_by_user = prs_by_user.groupby("username").count().reset_index()
-
-    prs_by_user = prs_by_user[
-        [
-            "username",
-            "pr_title",
-        ]
-    ].rename(
-        columns={
-            "pr_title": "prs_opened",
-        }
     )
 
-    if show:
-        display(
-            pd.concat(
-                [
-                    prs_by_user,
-                    pd.DataFrame(
-                        {
-                            "username": ["Total"],
-                            "prs_opened": [prs_by_user["prs_opened"].sum()],
-                        }
-                    ),
-                ],
-                ignore_index=True,
-            ).reset_index(drop=True)
+    # split into dataframes for records with/without responses
+    # ------------------------------------------------------------
+    no_response, with_response = _segment_data_on_comments(unique_prs)
+
+    # split with_response into dataframes with self/external responses
+    # ------------------------------------------------------------
+    self_response, external_response = _identify_self_vs_external_responses(
+        with_response
+    )
+
+    # confirm pr counts are correct after segmentation
+    # ------------------------------------------------------------
+    if not len(self_response["number"]) + len(external_response["number"]) + len(
+        no_response["number"]
+    ) == len(unique_prs):
+        raise ValueError(
+            "Number of unique prs has changed after segmentation,"
+            " which indicates a problem with the data processing."
+            " Please check the code and try again."
         )
+    else:
+        pass
 
-    if return_df:
-        return prs_by_user
+    # calculate time-to-respond metric
+    # ------------------------------
 
-    return
+    prs_segmented = pd.concat(
+        [
+            df
+            for df in [
+                no_response,
+                self_response,
+                external_response,
+            ]
+            if not df.empty
+        ],
+        ignore_index=True,
+    )
+
+    prs_segmented = prs_segmented.sort_values("number", ascending=False)
+
+    prs_segmented["ttr_date"] = prs_segmented.apply(
+        lambda x: _assign_ttr_date(
+            x,
+            report_date,
+        ),
+        axis=1,
+    )
+
+    prs_segmented = _calc_business_hours_elapsed(prs_segmented)
+    prs_segmented["ttr_days"] = round(prs_segmented["ttr_hours"] / 24, 2)
+
+    return prs_segmented
 
 
-# %% -------------------------------------
-# Get PRs closed / merged
-# ----------------------------------------
+# %% ----------------------------------------
+# Metrics
+# -------------------------------------------
+
+# %%
 
 
 def pr_status_counts(
     data,
 ):
+    """
+    This function generates a table of PRs based on status
+    """
     df = data.copy()
     df = df[
         [
@@ -308,16 +332,14 @@ def pr_status_counts(
     return table
 
 
-# %% -------------------------------------
-# Get PRs opened by users
-# ----------------------------------------
-
-
 def prs_opened_by_users(
     df,
     by_dev_status=False,
     return_df=False,
 ):
+    """
+    This function generates a table of PRs opened by username
+    """
     if by_dev_status:
         by_col = "opened_by"
     else:
@@ -360,263 +382,6 @@ def prs_opened_by_users(
         return prs_by_user
 
     return table
-
-
-# %% -------------------------------------
-# Get Time to Response Metric
-# ----------------------------------------
-
-
-def process_prs_for_ttr(
-    df,
-    report_date,
-):
-    # unique non-bot prs
-    # ------------------------------
-    unique_prs = df.drop_duplicates(
-        [
-            "pr_title",
-            "date_opened",
-            "username",
-        ]
-    )
-
-    # prs w/o comments
-    # ------------------------------
-    no_response = (
-        unique_prs[
-            unique_prs["comment_datetime"].apply(
-                lambda x: not isinstance(
-                    x,
-                    pd.Timestamp,
-                )
-            )
-        ]
-        .reset_index(drop=True)
-        .copy()
-    )
-
-    if no_response.empty:
-        no_response = pd.DataFrame(columns=unique_prs.columns)
-
-    no_response["status"] = "no response"
-
-    # get prs w/ comments
-    # ------------------------------
-    with_response = (
-        unique_prs[
-            unique_prs["comment_datetime"].apply(
-                lambda x: isinstance(
-                    x,
-                    pd.Timestamp,
-                )
-            )
-        ]
-        .reset_index(drop=True)
-        .copy()
-    )
-
-    # ensure DataFrame has the right columns if empty
-    if with_response.empty:
-        with_response = pd.DataFrame(columns=unique_prs.columns)
-
-    unique_prs_with_response = list(with_response["number"].unique())
-
-    # create indicator var for when username != comment_username
-    # ------------------------------
-    def assign_external_response(row):
-        """
-        Function to compare username and comment_username rows
-        of a DataFrame and return 1 if they are not equal, else 0.
-        """
-        if row["username"] != row["comment_username"]:
-            return 1
-        else:
-            return 0
-
-    with_response["ext_response"] = with_response.apply(
-        lambda x: assign_external_response(x), axis=1
-    )
-
-    # check that all records have valid ext_response value
-    # ------------------------------
-    if not set(with_response["ext_response"].unique()).issubset({0, 1}):
-        raise ValueError("ext_response column should only contain 0 and 1")
-    else:
-        pass
-
-    # split into two dataframes on ext_response indicator
-    # ------------------------------
-    external_responses_all = with_response[with_response["ext_response"] == 1].copy()
-    without_ext = with_response[with_response["ext_response"] == 0].copy()
-
-    # sort by id, date with oldest dates first
-    external_responses_all = external_responses_all.sort_values(
-        ["number", "comment_date"],
-        ascending=[False, True],
-    )
-    external_responses_all = external_responses_all.reset_index(drop=True)
-
-    # unique prs with an external response, keeping the first response instance
-    # ------------------------------
-    external_response = (
-        external_responses_all.drop_duplicates(["number"]).reset_index(drop=True).copy()
-    )
-    external_response["drop"] = 1
-
-    # unique prs with only self comments
-    # ------------------------------
-    self_response = without_ext.join(
-        external_response[["number", "drop"]].set_index("number"),
-        on="number",
-        how="left",
-    )
-
-    # drop rows where top is 1
-    # ------------------------------
-    self_response = self_response[self_response["drop"] != 1].copy()
-    self_response = self_response.drop_duplicates(["number"])
-    self_response = self_response.reset_index(drop=True)
-
-    cols_to_remove = ["ext_response", "drop"]
-
-    self_response = self_response.drop(
-        columns=cols_to_remove,
-    )
-    external_response = external_response.drop(
-        columns=cols_to_remove,
-    )
-
-    self_response["status"] = "self comment"
-    external_response["status"] = "external comment"
-
-    # check that all records are accounted for after manipulations
-    # ------------------------------
-    if not len(self_response["number"]) + len(external_response["number"]) == len(
-        unique_prs_with_response
-    ):
-        raise ValueError(
-            "Number of unique prs with a response has changed,"
-            " which indicates a problem with the data processing."
-            " Please check the code and try again."
-        )
-    else:
-        pass
-
-    # confirm pr counts are correct after segmentation
-    # ----------------------------------------
-    if not len(self_response["number"]) + len(external_response["number"]) + len(
-        no_response["number"]
-    ) == len(unique_prs):
-        raise ValueError(
-            "Number of unique prs has changed after segmentation,"
-            " which indicates a problem with the data processing."
-            " Please check the code and try again."
-        )
-    else:
-        pass
-
-    # Determine time-to-respond metric
-    # ------------------------------
-
-    prs_segmented = pd.concat(
-        [
-            df
-            for df in [
-                no_response,
-                self_response,
-                external_response,
-            ]
-            if not df.empty
-        ],
-        ignore_index=True,
-    )
-
-    prs_segmented = prs_segmented.sort_values("number", ascending=False)
-
-    def assign_ttr_date(row, report_date):
-        """
-        Function to assign a date to use for time-to-respond metric based on
-        the status of the pr.
-        """
-        # format report date
-        report_date = pd.to_datetime(report_date)
-
-        # assign ttr_date based on status
-        if row["status"] == "no response":
-            if pd.notnull(row["datetime_closed"]):
-                return row["datetime_closed"]
-            else:
-                return report_date
-        elif row["status"] == "self comment":
-            if pd.notnull(row["datetime_closed"]):
-                return row["datetime_closed"]
-            else:
-                return report_date
-        elif row["status"] == "external comment":
-            if pd.notnull(row["datetime_closed"]):
-                # return whichever is earliest between datetime_closed
-                # and comment_datetime
-                # NOTE: datetime_closed handles merged dates as well in GitHub API
-                return min(
-                    pd.to_datetime(row["datetime_closed"]),
-                    pd.to_datetime(row["comment_datetime"]),
-                )
-            else:
-                if not isinstance(row["comment_datetime"], pd.Timestamp):
-                    print("\n--- BAD TYPE DETECTED ---")
-                    print(f"number: {row['number']}, status: {row['status']}")
-                    print("comment_datetime type:", type(row["comment_datetime"]))
-                    print("comment_datetime value:", row["comment_datetime"])
-                return row["comment_datetime"]
-        else:
-            raise ValueError(
-                "Invalid status value. Expected 'no response', 'self comment',"
-                " or 'external comment'."
-            )
-
-    prs_segmented["ttr_date"] = prs_segmented.apply(
-        lambda x: assign_ttr_date(
-            x,
-            report_date,
-        ),
-        axis=1,
-    )
-
-    # Compute time elapsed in business days
-    # ------------------------------
-    def business_hours_elapsed(df):
-        # build holiday set
-        start_holiday = df["datetime_opened"].min().floor("D")
-        end_holiday = df["ttr_date"].max().floor("D")
-
-        cal = USFederalHolidayCalendar()
-        holidays = set(cal.holidays(start=start_holiday, end=end_holiday).date)
-
-        def calc(row):
-            start = row["datetime_opened"]
-            end = row["ttr_date"]
-            raw_elapsed = end - start
-
-            all_dates = pd.date_range(
-                start=start.floor("D"), end=end.floor("D"), freq="D"
-            ).date
-
-            days_to_exclude = {
-                d for d in all_dates if d.weekday() >= 5 or d in holidays
-            }
-            business_delta = raw_elapsed - timedelta(days=len(days_to_exclude))
-            business_delta = max(business_delta, timedelta(0))
-            return round(business_delta.total_seconds() / 3600, 1)
-
-        df["ttr_hours"] = df.apply(calc, axis=1)
-        return df
-
-    prs_segmented = business_hours_elapsed(prs_segmented)
-    prs_segmented["ttr_days"] = round(prs_segmented["ttr_hours"] / 24, 2)
-
-    return prs_segmented
-
 
 # %% ---------------------------
 # Time To Response Table
@@ -693,74 +458,6 @@ def generate_ttr_table(data):
     )
 
     return ttr_prs_table
-
-
-# %% ----------------------------------------
-# Define and run reports
-# -------------------------------------------
-
-
-def build_report_tables_from_records(
-    df,
-    report_date=None,
-    display_tables=True,
-    style_displayed_tables=True,
-):
-    """
-    Build report tables from the processed data.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-    report_date : datetime.date, optional
-    display_tables : bool
-    style_displayed_tables : bool
-
-    Returns
-    -------
-    dict
-    """
-    if report_date is None:
-        report_date = datetime.now().date()
-
-    # PR status metrics
-    pr_status_overall = pr_status_counts(df)
-
-    opened_by_status_table = prs_opened_by_users(
-        df,
-        by_dev_status=True,
-    )
-
-    # Time-to-response metrics
-    prs_segmented = process_prs_for_ttr(df, report_date)
-    ttr_prs_table = generate_ttr_table(prs_segmented)
-
-    nondev_prs = df.loc[df["opened_by"] != "Developer"].reset_index(drop=True)
-    if nondev_prs.empty:
-        nondev_ttr_prs_table = pd.DataFrame(
-            columns=["Time Window", "Percent", "Cumulative Percent"]
-        )
-    else:
-        nondev_prs_segmented = process_prs_for_ttr(nondev_prs, report_date)
-        nondev_ttr_prs_table = generate_ttr_table(nondev_prs_segmented)
-
-    tables = {
-        "pr_status_overall": pr_status_overall,
-        "opened_by_status_table": opened_by_status_table,
-        "ttr_prs_table": ttr_prs_table,
-        "nondev_ttr_prs_table": nondev_ttr_prs_table,
-    }
-
-    if display_tables:
-        if style_displayed_tables:
-            for key, table in tables.items():
-                render_html_table(table)
-        else:
-            for table in tables.values():
-                display(table)
-
-    return tables
-
 
 # %% ---------------------------
 # Process report data for saving
@@ -961,78 +658,6 @@ def save_alltime_report_data(
     return
 
 
-def build_report_tables_from_pickle(
-    report_data,
-    display_tables=True,
-    style_displayed_tables=True,
-):
-    """
-    Build report tables from saved metrics data in a generic way.
-
-    Parameters
-    ----------
-    report_data : pd.DataFrame
-    display_tables : bool
-    style_displayed_tables : bool
-
-    Returns
-    -------
-    dict
-        Dictionary of tables keyed by metric type.
-    """
-    df = report_data.copy()
-
-    tables = {}
-
-    for metric, group in df.groupby("metric"):
-        rename_val = group["value_type"].iloc[0]
-        rename_subval = group["sub_value_type"].iloc[0]
-        rename_indicator = group["indicator_name"].iloc[0]
-
-        rename_val = rename_val.replace("_", " ").title()
-        rename_subval = rename_subval.replace("_", " ").title()
-        rename_indicator = rename_indicator.replace("_", " ").title()
-
-        title = group["metric"].iloc[0]
-        title = title.replace("_", " ").title()
-
-        # drop columns not needed for display
-        table = group.drop(
-            columns=[
-                "report_date",
-                "start_date",
-                # "metric",
-                "value_type",
-                "sub_value_type",
-                "grant_year",
-            ]
-        )
-        table = table.rename(
-            columns={
-                "value": rename_val,
-                "sub_value": rename_subval,
-                "indicator_value": rename_indicator,
-            }
-        )
-
-        drops = ["NA", "Na", "indicator_name"]
-
-        for col in drops:
-            if col in table.columns:
-                table = table.drop(columns=col)
-
-        tables[metric] = table.reset_index(drop=True)
-
-        table = table.drop(columns=["metric"])
-
-        if display_tables:
-            print(f"{title}")
-            if style_displayed_tables:
-                render_html_table(table)
-            else:
-                display(table)
-
-    return tables
 
 
 def run_alltime_report(
@@ -1412,724 +1037,74 @@ def run_u24_pr_report(
     return combined_report_data
 
 
-# %% ----------------------------------------
-# Define report-specific visualizations
-# -------------------------------------------
-
-sns.set_palette("Set2")
-
-
-# barplot of counts
-# ----------------------------
-def barplot_counts(
-    report_data,
-    metrics=None,
-    value_col="value",
-):
-    df = report_data.copy()
-
-    if metrics is None:
-        metrics = ["pr_status"]
-
-    for metric in metrics:
-        yearly_data = df[df["metric"] == metric].copy()
-        # yearly_data = yearly_data[yearly_data["grant_year"] != "all_time"]
-
-        yearly_data["grant_year"] = yearly_data["grant_year"].replace(
-            {"all_time": "Overall"}
-        )
-
-        if yearly_data.empty:
-            continue
-
-        pivot_table = yearly_data.pivot_table(
-            index="grant_year",
-            columns="indicator_value",
-            values=value_col,
-            aggfunc="first",
-        ).sort_index()
-
-        # change bar order to: new issues, closed issues, outstanding issues
-        if metric == "pr_status":
-            pivot_table = pivot_table.reindex(
-                columns=[
-                    "Opened",
-                    "Closed",
-                    "Merged",
-                ]
-            )
-
-        ax = pivot_table.plot(
-            kind="bar",
-            figsize=(9, 5),
-            width=0.8,
-        )
-
-        title_text = metric.replace(
-            "_",
-            " ",
-        ).title()
-        title_text = title_text.replace(
-            "Pr",
-            "Pull Request (PR)",
-        )
-        ax.set_title(
-            f"{title_text}",
-            fontsize=14,
-        )
-        ax.set_xlabel(
-            "",
-            fontsize=12,
-        )
-        ax.set_ylabel(
-            "Count",
-            fontsize=12,
-        )
-        ax.grid(
-            axis="y",
-            linestyle="--",
-            alpha=0.4,
-        )
-        ax.legend(
-            # bbox_to_anchor=(1.05, 1),
-            loc="upper right",
-        )
-        plt.xticks(
-            rotation=0,
-        )
-
-        # data labels
-        for p in ax.patches:
-            height = p.get_height()
-            if not pd.isna(height):
-                ax.annotate(
-                    f"{int(height)}",
-                    (p.get_x() + p.get_width() / 2.0, height),
-                    ha="center",
-                    va="bottom",
-                    fontsize=10,
-                )
-
-        plt.tight_layout()
-        plt.show()
-
-
-# Stacked bar charts for TTR metrics
-# ---------------------------------
-def barplot_stacked(
-    report_data,
-    metrics=None,
-    value_col="value",
-):
-    df = report_data.copy()
-
-    if metrics is None:
-        metrics = ["opened_by_dev_status"]
-
-    for metric in metrics:
-        metric_data = df[df["metric"] == metric]
-        # remove "all_time" and "total" rows
-        yearly_data = metric_data[
-            (metric_data["grant_year"] != "all_time")
-            & (metric_data["indicator_value"].str.lower() != "total")
-        ]
-
-        if yearly_data.empty:
-            continue
-
-        # pivot table to hold the counts
-        pivot_table = yearly_data.pivot_table(
-            index="grant_year",
-            columns="indicator_value",
-            values=value_col,
-            aggfunc="first",
-        ).sort_index()
-
-        # table to hold percents
-        pivot_table_percent = pivot_table.div(pivot_table.sum(axis=1), axis=0) * 100
-
-        ax = pivot_table_percent.plot(
-            kind="bar",
-            stacked=True,
-            figsize=(9, 5),
-            colormap="Set2",
-        )
-
-        title_text = metric.replace(
-            "_",
-            " ",
-        ).title()
-        title_text = title_text.replace(
-            "Dev",
-            "Developer",
-        )
-        ax.set_title(
-            f"Percent PRs {title_text}",
-            fontsize=14,
-        )
-        ax.set_xlabel(
-            "",
-            fontsize=12,
-        )
-        ax.set_ylabel(
-            "Percent",
-            fontsize=12,
-        )
-        ax.grid(
-            axis="y",
-            linestyle="--",
-            alpha=0.3,
-        )
-        ax.legend(
-            # bbox_to_anchor=(1.05, 1),
-            loc="lower right",
-        )
-        plt.xticks(rotation=0)
-
-        # add data labels, zipping the percents with the counts
-        for i, (row_pct, row_count) in enumerate(
-            zip(
-                pivot_table_percent.values,
-                pivot_table.values,
-            )
-        ):
-            cumulative = 0
-            for j, (pct, count) in enumerate(
-                zip(
-                    row_pct,
-                    row_count,
-                )
-            ):
-                if not pd.isna(pct) and pct > 0:
-                    ax.text(
-                        i,
-                        cumulative + pct / 2,
-                        f"{pct:.1f}%\n(n={int(count)})",
-                        ha="center",
-                        va="center",
-                        fontsize=10,
-                        color="black",
-                    )
-                    cumulative += pct
-
-        plt.tight_layout()
-        plt.show()
-
-
-# lineplot for time-to-response metrics
-# ---------------------------------
-def lineplot_fast_response(
-    report_data,
-    grant_years=[
-        "year 1",
-        "year 2",
-        "year 3",
-    ],
-):
-    df = report_data.copy()
-
-    # Filter to TTR metrics only
-    ttr_metrics = df[
-        df["metric"].isin(
-            [
-                "overall_time_to_respond",
-                "nondev_time_to_respond",
-            ]
-        )
-    ]
-    if ttr_metrics.empty:
-        print("No TTR data available.")
-        return
-
-    # Get counts from opened_by_dev_status
-    counts_df = df[df["metric"] == "opened_by_dev_status"]
-
-    plot_data = []
-
-    for metric, label in zip(
-        ["overall_time_to_respond", "nondev_time_to_respond"],
-        ["All PRs", "Non-Developer PRs"],
-    ):
-        subset = ttr_metrics[ttr_metrics["metric"] == metric]
-
-        # keep only the specified grant_years
-        subset = subset[subset["grant_year"].isin(grant_years)]
-
-        for _, row in subset.iterrows():
-            if row["indicator_value"] == "< 02 days":
-                percent = row["value"]
-
-                indicator_value_map = {
-                    "overall_time_to_respond": "Total",
-                    "nondev_time_to_respond": "Non-Developer",
-                }
-                count_row = counts_df[
-                    (counts_df["grant_year"] == row["grant_year"])
-                    & (counts_df["indicator_value"] == indicator_value_map[metric])
-                ]
-                count = count_row["value"].values[0] if not count_row.empty else None
-
-                plot_data.append(
-                    {
-                        "grant_year": row["grant_year"],
-                        "percent_fast_response": float(percent),
-                        "count": int(count) if pd.notna(count) else None,
-                        "group": label,
-                    }
-                )
-
-    plot_df = pd.DataFrame(plot_data)
-    plot_df = plot_df.sort_values("grant_year")
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for group, group_df in plot_df.groupby("group"):
-        x = group_df["grant_year"]
-        y = group_df["percent_fast_response"]
-        ax.plot(
-            x,
-            y,
-            marker="o",
-            label=group,
-        )
-
-        # add data labels
-        for xi, yi, count in zip(x, y, group_df["count"]):
-            if count is not None:
-                ax.text(
-                    xi,
-                    yi + 9,
-                    f"{yi:.0f}%\nn={count}",
-                    ha="center",
-                    va="top",
-                    fontsize=10,
-                    color="black",
-                )
-
-    ax.set_title(
-        "% PRs with Response Time < 2 Business Days",
-        fontsize=14,
-        pad=40,
-    )
-    ax.set_ylabel(
-        "Percent",
-        fontsize=12,
-    )
-    ax.set_ylim(0, 100)
-    ax.grid(
-        axis="y",
-        linestyle="--",
-        alpha=0.3,
-    )
-    ax.legend()
-    plt.tight_layout()
-    plt.show()
-
-
-# longitudinal counts
-# -------------------------------------------
-def plot_longitudinal_counts(
-    report_data,
-    metric_period="monthly",  # accepts 'monthly' or 'rolling_monthly'
-    value_col="value",
-):
-    """ """
-    df = report_data.copy()
-
-    # filter 'issue_staus' for specific period
-    df = df[(df["metric_period"] == metric_period) & (df["metric"] == "pr_status")]
-
-    if df.empty:
-        print(f"No data found for period: {metric_period}")
-        return
-
-    # ensure value column is numeric
-    df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
-
-    # determine date column
-    # - use 'report_date' for rolling
-    # - use 'start_date' for monthly
-    date_col = "report_date" if "rolling" in metric_period else "start_date"
-    df[date_col] = pd.to_datetime(df[date_col])
-    df = df.sort_values(date_col)
-
-    pivot_table = df.pivot_table(
-        index=date_col,
-        columns="indicator_value",
-        values=value_col,
-        aggfunc="first",
-    )
-
-    desired_order = ["Opened", "Closed", "Merged"]
-    cols = [c for c in desired_order if c in pivot_table.columns]
-    pivot_table = pivot_table[cols]
-
-    import matplotlib.dates as mdates
-
-    ax = pivot_table.plot(
-        kind="line",
-        figsize=(12, 6),
-        linewidth=2,
-    )
-
-    title_prefix = "Rolling " if "rolling" in metric_period else "Monthly "
-
-    # set ticks for start, end, and each year in between
-    dates = pivot_table.index
-    start_date = dates.min()
-    end_date = dates.max()
-    years = pd.date_range(
-        start=start_date,
-        end=end_date,
-        freq="YS",
-    )
-    ticks = sorted(list(set([start_date, end_date] + list(years))))
-
-    ax.set_xticks(ticks)
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
-
-    # add data labels at the ticks
-    for col in pivot_table.columns:
-        series = pivot_table[col]
-
-        # find closest indices to the ticks
-        nearest_idxs = series.index.get_indexer(ticks, method="nearest")
-
-        for i, idx in enumerate(nearest_idxs):
-            date_val = series.index[idx]
-            y_val = series.iloc[idx]
-
-            # only label if date is reasonably close to the tick
-            if abs((ticks[i] - date_val).days) < 45:
-                ax.annotate(
-                    f"{int(y_val)}",
-                    (date_val, y_val),
-                    xytext=(0, 5),
-                    textcoords="offset points",
-                    ha="center",
-                    fontsize=12,
-                )
-
-    ax.set_title(
-        f"{title_prefix}PR Volume",
-        fontsize=16,
-    )
-    ax.set_xlabel(
-        "",
-        fontsize=12,
-    )
-    ax.set_ylabel(
-        "Count",
-        fontsize=12,
-    )
-    ax.grid(
-        axis="y",
-        linestyle="--",
-        alpha=0.3,
-    )
-    ax.legend(fontsize=12)
-
-    plt.xticks(
-        rotation=45,
-        ha="right",
-    )
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_longitudinal_ttr(
-    report_data,
-    metric_period="monthly",  # accepts 'monthly' or 'rolling_monthly'
-    target_bin="< 02 days",
-):
-    """ """
-    df = report_data.copy()
-
-    # filter for TTR metrics and specific period
-    ttr_metrics = [
-        "overall_time_to_respond",
-        "nondev_time_to_respond",
-    ]
-    df = df[
-        (df["metric_period"] == metric_period)
-        & (df["metric"].isin(ttr_metrics))
-        & (df["indicator_value"] == target_bin)
-    ]
-
-    if df.empty:
-        print(f"No TTR data found for period: {metric_period}")
-        return
-
-    # determine date column based on metric_period
-    date_col = "report_date" if "rolling" in metric_period else "start_date"
-    df[date_col] = pd.to_datetime(df[date_col])
-    df = df.sort_values(date_col)
-
-    pivot_df = df.pivot_table(
-        index=date_col,
-        columns="metric",
-        values="value",
-    )
-
-    col_map = {
-        "overall_time_to_respond": "All PRs",
-        "nondev_time_to_respond": "Non-Dev PRs",
-    }
-    pivot_df = pivot_df.rename(columns=col_map)
-
-    # set ticks for start, end, and each year in between
-    dates = pivot_df.index
-    start_date = dates.min()
-    end_date = dates.max()
-    years = pd.date_range(
-        start=start_date,
-        end=end_date,
-        freq="YS",
-    )
-    ticks = sorted(list(set([start_date, end_date] + list(years))))
-
-    fig, axes = plt.subplots(
-        nrows=2,
-        ncols=1,
-        figsize=(12, 10),
-        sharex=True,
-    )
-
-    targets = [
-        "All PRs",
-        "Non-Dev PRs",
-    ]
-    colors = [
-        "#1f77b4",
-        "#ff7f0e",
-    ]
-
-    for i, (target, color) in enumerate(zip(targets, colors)):
-        if target in pivot_df.columns:
-            ax = axes[i]
-
-            ax.plot(
-                pivot_df.index,
-                pivot_df[target],
-                # marker="o",
-                linewidth=2,
-                label=target,
-                color=color,
-            )
-
-            # add data labels at the ticks
-            series = pivot_df[target]
-            # find closest indices to the ticks
-            nearest_idxs = series.index.get_indexer(ticks, method="nearest")
-
-            for tick_i, idx in enumerate(nearest_idxs):
-                date_val = series.index[idx]
-                y_val = series.iloc[idx]
-
-                # only add label if date is reasonably close to the tick
-                if abs((ticks[tick_i] - date_val).days) < 45:
-                    ax.annotate(
-                        f"{y_val:.1f}%",
-                        (date_val, y_val),
-                        xytext=(0, 10),
-                        textcoords="offset points",
-                        ha="center",
-                        fontsize=12,
-                    )
-
-            ax.set_ylabel(
-                "Percent",
-                fontsize=12,
-            )
-            ax.set_ylim(
-                0,
-                105,
-            )
-            ax.grid(
-                axis="y",
-                linestyle="--",
-                alpha=0.4,
-            )
-            ax.legend(
-                fontsize=12,
-                loc="upper left",
-            )
-
-            # Only set title on top plot
-            if i == 0:
-                title_prefix = "Rolling " if "rolling" in metric_period else "Monthly "
-                ax.set_title(
-                    f"{title_prefix}Percent Responded {target_bin}",
-                    fontsize=16,
-                )
-
-    # Apply ticks to the bottom axis
-    import matplotlib.dates as mdates
-
-    axes[-1].set_xticks(ticks)
-    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
-    axes[-1].set_xlabel(
-        "Date",
-        fontsize=12,
-    )
-
-    plt.xticks(
-        rotation=45,
-        ha="right",
-    )
-    plt.tight_layout()
-    plt.show()
-
-
-def run_main_reports():
+def run_main_reports(dev_usernames=None):
     # set report parameters
     # ------------------------------
     start_date = False
     end_date = False
-    # display_tables = True
-    # style_displayed_tables = True
-    save_report_data = False
+    save_report_data = True
     overwrite_historical_data = True
-    report_name = "alltime_prs_report.pkl"
 
-    dev_usernames = [
-        "stephanie-r-jones",
-        "jasmainak",
-        "ntolley",
-        "rythorpe",
-        "asoplata",
-        "dylansdaniels",
-        "blakecaldwell",
-        "katduecker",
-        "carolinafernandezp",
-        "gtdang",
-        "kmilo9999",
-        "samadpls",
-        "Myrausman",
-        "Chetank99",
-    ]
+    if dev_usernames is None:
+        dev_usernames = [
+            "stephanie-r-jones",
+            "jasmainak",
+            "ntolley",
+            "rythorpe",
+            "asoplata",
+            "dylansdaniels",
+            "blakecaldwell",
+            "katduecker",
+            "carolinafernandezp",
+            "gtdang",
+            "kmilo9999",
+            "samadpls",
+            "Myrausman",
+            "Chetank99",
+        ]
 
-    # --> [DEV]
+    # --> [DEV] for local testing
     if "dylandaniels" in os.getcwd():
         start_date = "2019-01-01"
         end_date = "2025-12-01"
     # --> [END DEV]
 
+    alltime_report_dir = os.path.join(
+        "report_data",
+        "alltime_prs_report.pkl",
+    )
+    monthly_report_dir = os.path.join(
+        "report_data",
+        "monthly_prs_report.pkl",
+    )
+    u24_report_dir = os.path.join(
+        "report_data",
+        "u24_prs_report.pkl",
+    )
+
     processed_df = run_alltime_report(
         start_date=start_date,
         end_date=end_date,
-        save_report_data=True,
-        report_name=report_name,
-        dev_usernames=dev_usernames,
-    )
-
-    # Run U24 grant-year report
-    u24_report_data = run_u24_pr_report(
-        end_date=end_date,
         save_report_data=save_report_data,
-        report_name="u24_prs_report.pkl",
-        overwrite_historical_data=overwrite_historical_data,
+        report_name=alltime_report_dir,
         dev_usernames=dev_usernames,
     )
 
     _ = run_monthly_report(
         start_date=start_date,
         end_date=end_date,
-        save_report_data=True,
-        report_name="monthly_prs_report.pkl",
+        save_report_data=save_report_data,
+        report_name=monthly_report_dir,
         dev_usernames=dev_usernames,
     )
 
-    # ---------------------------------
-    # posthoc checks
-    # ---------------------------------
-    with open(
-        os.path.join(
-            "issues_metrics",
-            report_name,
-        ),
-        "rb",
-    ) as f:
-        report_data = pickle.load(f)
-
-    # only show data for the current report date
-    # ---------------------------------
-    display(
-        report_data[report_data["report_date"] == str(pd.to_datetime(end_date).date())]
-    )
-
-    # generate tables for each year
-    # ---------------------------------
-    print(
-        "\n"
-        "====================================\n"
-        "======== U24 Report Outputs ========\n"
-        "====================================\n"
-    )
-    for year in u24_report_data["grant_year"].unique():
-        print(f"\n--- U24 Tables for {year} ---\n")
-        year_data = u24_report_data[u24_report_data["grant_year"] == year]
-        build_report_tables_from_pickle(
-            year_data,
-            display_tables=True,
-            style_displayed_tables=True,
-        )
-
-    # generate U24 plots
-    # ---------------------------------
-    barplot_counts(u24_report_data)
-    barplot_stacked(u24_report_data)
-    lineplot_fast_response(u24_report_data)
-
-    print(
-        "\n"
-        "========================================\n"
-        "======== END U24 Report Outputs ========\n"
-        "========================================\n"
-    )
-
-    print(
-        "\n"
-        "========================================\n"
-        "======== Monthly Report Outputs ========\n"
-        "========================================\n"
-    )
-
-    # monthly and rolling visualizations
-    # ---------------------------------
-    monthly_report_path = os.path.join(
-        "issues_metrics",
-        "monthly_prs_report.pkl",
-    )
-
-    if os.path.exists(monthly_report_path):
-        with open(monthly_report_path, "rb") as f:
-            monthly_data = pickle.load(f)
-
-        # monthly data
-        plot_longitudinal_counts(
-            monthly_data,
-            metric_period="monthly",
-        )
-        plot_longitudinal_ttr(
-            monthly_data,
-            metric_period="monthly",
-        )
-
-        # rolling monthly data
-        plot_longitudinal_counts(
-            monthly_data,
-            metric_period="rolling_monthly",
-        )
-        plot_longitudinal_ttr(
-            monthly_data,
-            metric_period="rolling_monthly",
-        )
-
-    print(
-        "\n"
-        "============================================\n"
-        "======== End Monthly Report Outputs ========\n"
-        "============================================\n"
+    # Run U24 grant-year report
+    _ = run_u24_pr_report(
+        end_date=end_date,
+        save_report_data=save_report_data,
+        report_name=u24_report_dir,
+        overwrite_historical_data=overwrite_historical_data,
+        dev_usernames=dev_usernames,
     )
 
     return processed_df

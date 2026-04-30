@@ -44,8 +44,7 @@ jobs:
           MONTH_YEAR=$(date +"%B %Y")
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add issues_metrics/raw_prs_data.pkl
-          git add issues_metrics/prs_report.pkl
+          git add issues_metrics/*.pkl
           git commit -m "Monthly PR data upload for $MONTH_YEAR" \
             || echo "No changes to commit"
           git push

@@ -1,8 +1,10 @@
 # issues_analysis.py
 
-# potential enhancements
-# - replace prints with loging
-# - the "business_hours_elapsed" function could be vectorized
+# opportunities for enhancements
+# ----------------------
+# -> moved shared issue/pr processing functions to a separate file
+# -> replace prints with logging
+# -> vectorize the _calc_business_hours_elapsed function
 
 # %% [markdown] -----------------------------------------------------------
 # Setup
@@ -25,6 +27,7 @@ DATAPATH = os.path.join("issues_metrics", "raw_issues_data.pkl")
 # -------------------------------------------------------------------------
 
 # %%
+
 
 def process_datetime(df, date_cols):
     """
@@ -214,8 +217,8 @@ def process_issues_for_ttr(
             - "ttr_days": days elapsed from issue open to response
     """
 
-    # unique non-bot issues
-    # ------------------------------
+    # get unique, non-bot issues
+    # ------------------------------------------------------------
     unique_issues = df.drop_duplicates(
         [
             "issue_name",
@@ -224,11 +227,71 @@ def process_issues_for_ttr(
         ]
     )
 
-    # issues w/o comments
+    # split into dataframes for records with/without responses
+    # ------------------------------------------------------------
+    no_response, with_response = _segment_data_on_comments(unique_issues)
+
+    # split with_response into dataframes with self/external responses
+    # ------------------------------------------------------------
+    self_response, external_response = _identify_self_vs_external_responses(
+        with_response
+    )
+
+    # confirm issue counts are correct after segmentation
+    # ------------------------------------------------------------
+    if not len(self_response["number"]) + len(external_response["number"]) + len(
+        no_response["number"]
+    ) == len(unique_issues):
+        raise ValueError(
+            "Number of unique issues has changed after segmentation,"
+            " which indicates a problem with the data processing."
+            " Please check the code and try again."
+        )
+    else:
+        pass
+
+    # calculate time-to-respond metrics
+    # ------------------------------------------------------------
+    issues_segmented = pd.concat(
+        [
+            df
+            for df in [
+                no_response,
+                self_response,
+                external_response,
+            ]
+            if not df.empty
+        ],
+        ignore_index=True,
+    )
+
+    issues_segmented = issues_segmented.sort_values("number", ascending=False)
+
+    issues_segmented["ttr_date"] = issues_segmented.apply(
+        lambda x: _assign_ttr_date(
+            x,
+            report_date,
+        ),
+        axis=1,
+    )
+
+    issues_segmented = _calc_business_hours_elapsed(issues_segmented)
+    issues_segmented["ttr_days"] = round(issues_segmented["ttr_hours"] / 24, 2)
+
+    return issues_segmented
+
+
+def _segment_data_on_comments(
+    unique_data,
+):
+    """
+    Split into two dataframes, one with and one without comments
+    """
+    # records w/o comments
     # ------------------------------
     no_response = (
-        unique_issues[
-            unique_issues["comment_datetime"].apply(
+        unique_data[
+            unique_data["comment_datetime"].apply(
                 lambda x: not isinstance(
                     x,
                     pd.Timestamp,
@@ -240,15 +303,15 @@ def process_issues_for_ttr(
     )
 
     if no_response.empty:
-        no_response = pd.DataFrame(columns=unique_issues.columns)
+        no_response = pd.DataFrame(columns=unique_data.columns)
 
     no_response["status"] = "no response"
 
-    # get issues w/ comments
+    # get records w/ comments
     # ------------------------------
     with_response = (
-        unique_issues[
-            unique_issues["comment_datetime"].apply(
+        unique_data[
+            unique_data["comment_datetime"].apply(
                 lambda x: isinstance(
                     x,
                     pd.Timestamp,
@@ -261,9 +324,16 @@ def process_issues_for_ttr(
 
     # ensure DataFrame has the right columns if empty
     if with_response.empty:
-        with_response = pd.DataFrame(columns=unique_issues.columns)
+        with_response = pd.DataFrame(columns=unique_data.columns)
 
-    unique_issues_with_response = list(with_response["number"].unique())
+    return no_response, with_response
+
+def _identify_self_vs_external_responses(
+    data_with_responses,
+):
+    """
+    Identify records with external (as opposed to self) responses
+    """
 
     # create indicator var for when username != comment_username
     # ------------------------------
@@ -277,21 +347,25 @@ def process_issues_for_ttr(
         else:
             return 0
 
-    with_response["ext_response"] = with_response.apply(
+    data_with_responses["ext_response"] = data_with_responses.apply(
         lambda x: assign_external_response(x), axis=1
     )
 
-    # check that all records have valid ext_response value
-    # ------------------------------
-    if not set(with_response["ext_response"].unique()).issubset({0, 1}):
+    # check that all records have valid ext_response value after applying
+    # assign_external_response
+    if not set(data_with_responses["ext_response"].unique()).issubset({0, 1}):
         raise ValueError("ext_response column should only contain 0 and 1")
     else:
         pass
 
     # split into two dataframes on ext_response indicator
     # ------------------------------
-    external_responses_all = with_response[with_response["ext_response"] == 1].copy()
-    without_ext = with_response[with_response["ext_response"] == 0].copy()
+    external_responses_all = data_with_responses[
+        data_with_responses["ext_response"] == 1
+    ].copy()
+    without_ext = data_with_responses[
+        data_with_responses["ext_response"] == 0
+    ].copy()
 
     # sort by id, date with oldest dates first
     external_responses_all = external_responses_all.sort_values(
@@ -303,7 +377,9 @@ def process_issues_for_ttr(
     # unique issues with an external response, keeping the first response instance
     # ------------------------------
     external_response = (
-        external_responses_all.drop_duplicates(["number"]).reset_index(drop=True).copy()
+        external_responses_all.drop_duplicates(["number"])
+        .reset_index(drop=True)
+        .copy()
     )
     external_response["drop"] = 1
 
@@ -335,8 +411,12 @@ def process_issues_for_ttr(
 
     # check that all records are accounted for after manipulations
     # ------------------------------
+    # get list of issue numbers for issues with responses
+    unique_issues_data_with_responses = list(data_with_responses["number"].unique())
+
+    # self responses + external responses should equal the total unique responses
     if not len(self_response["number"]) + len(external_response["number"]) == len(
-        unique_issues_with_response
+        unique_issues_data_with_responses
     ):
         raise ValueError(
             "Number of unique issues with a response has changed,"
@@ -346,163 +426,125 @@ def process_issues_for_ttr(
     else:
         pass
 
-    # confirm issue counts are correct after segmentation
-    # ----------------------------------------
-    if not len(self_response["number"]) + len(external_response["number"]) + len(
-        no_response["number"]
-    ) == len(unique_issues):
-        raise ValueError(
-            "Number of unique issues has changed after segmentation,"
-            " which indicates a problem with the data processing."
-            " Please check the code and try again."
-        )
-    else:
-        pass
+    return self_response, external_response
 
-    # Determine time-to-respond metric
-    # ------------------------------
+def _assign_ttr_date(row, report_date):
+    """
+    Helper function to assign a date to use for time-to-respond metric based on
+    the status of the issue or PR being analyzed.
+    """
+    # format report date
+    report_date = pd.to_datetime(report_date)
 
-    issues_segmented = pd.concat(
-        [
-            df
-            for df in [
-                no_response,
-                self_response,
-                external_response,
-            ]
-            if not df.empty
-        ],
-        ignore_index=True,
-    )
-
-    issues_segmented = issues_segmented.sort_values("number", ascending=False)
-
-    def assign_ttr_date(row, report_date):
-        """
-        Function to assign a date to use for time-to-respond metric based on
-        the status of the issue.
-        """
-        # format report date
-        report_date = pd.to_datetime(report_date)
-
-        # assign ttr_date based on status
-        if row["status"] == "no response":
-            if pd.notnull(row["datetime_closed"]):
-                return row["datetime_closed"]
-            else:
-                return report_date
-        elif row["status"] == "self comment":
-            if pd.notnull(row["datetime_closed"]):
-                return row["datetime_closed"]
-            else:
-                return report_date
-        elif row["status"] == "external comment":
-            if pd.notnull(row["datetime_closed"]):
-                # return whichever is earliest between datetime_closed
-                # and comment_datetime
-                return min(
-                    pd.to_datetime(row["datetime_closed"]),
-                    pd.to_datetime(row["comment_datetime"]),
-                )
-            else:
-                if not isinstance(row["comment_datetime"], pd.Timestamp):
-                    print("\n--- BAD TYPE DETECTED ---")
-                    print(f"number: {row['number']}, status: {row['status']}")
-                    print("comment_datetime type:", type(row["comment_datetime"]))
-                    print("comment_datetime value:", row["comment_datetime"])
-                return row["comment_datetime"]
+    # assign ttr_date based on status
+    if row["status"] == "no response":
+        if pd.notnull(row["datetime_closed"]):
+            return row["datetime_closed"]
         else:
-            raise ValueError(
-                "Invalid status value. Expected 'no response', 'self comment',"
-                " or 'external comment'."
+            return report_date
+    elif row["status"] == "self comment":
+        if pd.notnull(row["datetime_closed"]):
+            return row["datetime_closed"]
+        else:
+            return report_date
+    elif row["status"] == "external comment":
+        if pd.notnull(row["datetime_closed"]):
+            # return whichever is earliest between datetime_closed
+            # and comment_datetime
+            return min(
+                pd.to_datetime(row["datetime_closed"]),
+                pd.to_datetime(row["comment_datetime"]),
             )
-
-    issues_segmented["ttr_date"] = issues_segmented.apply(
-        lambda x: assign_ttr_date(
-            x,
-            report_date,
-        ),
-        axis=1,
-    )
-
-    def business_hours_elapsed(df):
-        """
-        Calculate the business hours elapsed between datetime_opened and ttr_date,
-        subtracting time spent on weekends and holidays
-
-        Parameters:
-        -----------
-        df : pandas.DataFrame
-
-        Returns:
-        --------
-        pandas.DataFrame
-            The initial DataFrame with an additional column for "ttr_hours"
-        """
-
-        # build holiday calendar
-        start_holiday = df["datetime_opened"].min().floor("D")
-        end_holiday = df["ttr_date"].max().floor("D")
-
-        cal = USFederalHolidayCalendar()
-        holidays = set(cal.holidays(start=start_holiday, end=end_holiday).date)
-
-        def calc(row):
-            # get the issue open date and the response date
-            start = row["datetime_opened"]
-            end = row["ttr_date"]
-
-            # total time elapsed between issue open and response
-            raw_elapsed = end - start
-
-            # get all calendar days
-            all_dates = pd.date_range(
-                start=start.floor("D"), end=end.floor("D"), freq="D"
-            ).date
-
-            # get all holiday/weeksnds
-            days_to_exclude = {
-                d for d in all_dates if d.weekday() >= 5 or d in holidays
-            }
-
-            # calculate the non-business-day hours to subtract from the total elapsed
-            # time between when the issue was open and the first response
-            total_exclude_time = timedelta(0)
-            for d in days_to_exclude:
-                if d == start.date() and d == end.date():
-                    # start and end day are the same holiday/weekend
-                    total_exclude_time += (end - start)
-                elif d == start.date():
-                    # only the start is on a holiday / weekend
-                    # here we get time between start time and mignight of the next day
-                    next_day_midnight = start.floor("D") + timedelta(days=1)
-                    total_exclude_time += (next_day_midnight - start)
-                elif d == end.date():
-                    # only the end is on a holiday / weekend
-                    # here we get time between midnight and the end time on the same day
-                    total_exclude_time += (end - end.floor("D"))
-                else:
-                    # full holiday / weekends between the start/end dates
-                    total_exclude_time += timedelta(days=1)
-
-            business_delta = raw_elapsed - total_exclude_time
-            business_delta = max(business_delta, timedelta(0))
-            return round(business_delta.total_seconds() / 3600, 1)
-
-        df["ttr_hours"] = df.apply(calc, axis=1)
-        return df
+        else:
+            if not isinstance(row["comment_datetime"], pd.Timestamp):
+                print("\n--- BAD TYPE DETECTED ---")
+                print(f"number: {row['number']}, status: {row['status']}")
+                print("comment_datetime type:", type(row["comment_datetime"]))
+                print("comment_datetime value:", row["comment_datetime"])
+            return row["comment_datetime"]
+    else:
+        raise ValueError(
+            "Invalid status value. Expected 'no response', 'self comment',"
+            " or 'external comment'."
+        )
 
 
-    issues_segmented = business_hours_elapsed(issues_segmented)
-    issues_segmented["ttr_days"] = round(issues_segmented["ttr_hours"] / 24, 2)
+def _calc_business_hours_elapsed(
+    df,
+    start_col="datetime_opened",
+    end_col="ttr_date",
+):
+    """
+    Calculate the business hours elapsed between start_col and end_col,
+    subtracting time spent on weekends and holidays
 
-    return issues_segmented
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+
+    Returns:
+    --------
+    pandas.DataFrame
+        The initial DataFrame with an additional column for "ttr_hours"
+    """
+
+    # build holiday calendar
+    start_holiday = df[start_col].min().floor("D")
+    end_holiday = df[end_col].max().floor("D")
+
+    cal = USFederalHolidayCalendar()
+    holidays = set(cal.holidays(start=start_holiday, end=end_holiday).date)
+
+    def calc(row):
+        # get the issue open date and the response date
+        start = row[start_col]
+        end = row[end_col]
+
+        # total time elapsed between issue open and response
+        raw_elapsed = end - start
+
+        # get all calendar days
+        all_dates = pd.date_range(
+            start=start.floor("D"), end=end.floor("D"), freq="D"
+        ).date
+
+        # get all holiday/weeksnds
+        days_to_exclude = {d for d in all_dates if d.weekday() >= 5 or d in holidays}
+
+        # calculate the non-business-day hours to subtract from the total elapsed
+        # time between when the issue was open and the first response
+        total_exclude_time = timedelta(0)
+        for d in days_to_exclude:
+            if d == start.date() and d == end.date():
+                # start and end day are the same holiday/weekend
+                total_exclude_time += end - start
+            elif d == start.date():
+                # only the start is on a holiday / weekend
+                # here we get time between start time and mignight of the next day
+                next_day_midnight = start.floor("D") + timedelta(days=1)
+                total_exclude_time += next_day_midnight - start
+            elif d == end.date():
+                # only the end is on a holiday / weekend
+                # here we get time between midnight and the end time on the same day
+                total_exclude_time += end - end.floor("D")
+            else:
+                # full holiday / weekends between the start/end dates
+                total_exclude_time += timedelta(days=1)
+
+        business_delta = raw_elapsed - total_exclude_time
+        business_delta = max(business_delta, timedelta(0))
+        return round(business_delta.total_seconds() / 3600, 1)
+
+    df["ttr_hours"] = df.apply(calc, axis=1)
+    return df
+
 
 # %% [markdown] -----------------------------------------------------------
 # Metrics
 # -------------------------------------------------------------------------
 
 # %%
+
 
 def issue_status_counts(
     data,
@@ -687,12 +729,12 @@ def generate_ttr_table(data):
     return ttr_issues_table
 
 
-
 # %% [markdown] -----------------------------------------------------------
 # Process report data for saving
 # -------------------------------------------------------------------------
 
 # %%
+
 
 def prep_alltime_data_for_saving(
     start_date,
@@ -887,11 +929,13 @@ def save_alltime_report_data(
 
     return
 
+
 # %% [markdown] -----------------------------------------------------------
 # Define and run reports
 # -------------------------------------------------------------------------
 
 # %%
+
 
 def run_alltime_report(
     raw_issue_data=False,
@@ -1065,7 +1109,6 @@ def run_alltime_report(
     #  depracate direct pickling in facot of using save_alltime_report_data
 
     if save_report_data:
-
         report_path = os.path.join(
             "issues_metrics",
             report_name,
@@ -1312,7 +1355,6 @@ def run_u24_ttr_report(
 
 
 def run_main_reports(dev_usernames=None):
-
     # set report parameters
     # ------------------------------
     start_date = False
@@ -1357,31 +1399,31 @@ def run_main_reports(dev_usernames=None):
         "u24_issues_report.pkl",
     )
 
-    print("\n"+"#"*50)
+    print("\n" + "#" * 50)
     print("# Runing 'all time' report")
-    print("#"*50,"\n")
+    print("#" * 50, "\n")
     processed_df = run_alltime_report(
         start_date=start_date,
         end_date=end_date,
-        save_report_data=True,
+        save_report_data=save_report_data,
         report_name=alltime_report_dir,
         dev_usernames=dev_usernames,
     )
 
-    print("\n"+"#"*50)
+    print("\n" + "#" * 50)
     print("# Runing 'monthly' report")
-    print("#"*50,"\n")
+    print("#" * 50, "\n")
     _ = run_monthly_report(
         start_date=start_date,
         end_date=end_date,
-        save_report_data=True,
+        save_report_data=save_report_data,
         report_name=monthly_report_dir,
         dev_usernames=dev_usernames,
     )
 
-    print("\n"+"#"*50)
+    print("\n" + "#" * 50)
     print("# Runing 'U24' report")
-    print("#"*50,"\n")
+    print("#" * 50, "\n")
     _ = run_u24_ttr_report(
         end_date=end_date,
         save_report_data=save_report_data,

@@ -1,8 +1,15 @@
-# issues_viewer.py
+# prs_viewer.py
 
 # %% [markdown] -----------------------------------------------------------
 # Setup
 # -------------------------------------------------------------------------
+
+# opportunities for enhancements
+# ----------------------
+# -> there are functions here that share most of their "functional" code
+#    with their counterparts in issues_viewer; sometimes the only diffs
+#    are in labels/column names. these functions could be generalized
+#    entirely or at least in part where there is shared functionality
 
 # %%
 
@@ -12,28 +19,12 @@ import pickle
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
-from IPython.display import HTML, display
+from IPython.display import display
+
+from issues_metrics.issues_viewer import render_html_table
 
 sns.set_palette("Set2")
 
-# function to style html tables
-# ------------------------------
-def render_html_table(df):
-    display(HTML(df.to_html(classes="wrapped-table", index=False)))
-    display(
-        HTML("""
-    <style>
-    .wrapped-table {
-        table-layout: fixed;
-        width: auto;
-        word-wrap: break-word;
-    }
-    .wrapped-table td, .wrapped-table th {
-        white-space: normal;
-    }
-    </style>
-    """)
-    )
 
 def build_report_tables_from_pickle(
     report_data,
@@ -41,7 +32,18 @@ def build_report_tables_from_pickle(
     style_displayed_tables=True,
 ):
     """
-    Build report tables from saved metrics
+    Build report tables from saved metrics data in a generic way.
+
+    Parameters
+    ----------
+    report_data : pd.DataFrame
+    display_tables : bool
+    style_displayed_tables : bool
+
+    Returns
+    -------
+    dict
+        Dictionary of tables keyed by metric type.
     """
     df = report_data.copy()
 
@@ -113,7 +115,7 @@ def barplot_counts(
     df = report_data.copy()
 
     if metrics is None:
-        metrics = ["issues_status"]
+        metrics = ["pr_status"]
 
     for metric in metrics:
         yearly_data = df[df["metric"] == metric].copy()
@@ -134,12 +136,12 @@ def barplot_counts(
         ).sort_index()
 
         # change bar order to: new issues, closed issues, outstanding issues
-        if metric == "issues_status":
+        if metric == "pr_status":
             pivot_table = pivot_table.reindex(
                 columns=[
-                    "New Issues",
-                    "Closed Issues",
-                    "Outstanding Issues",
+                    "Opened",
+                    "Closed",
+                    "Merged",
                 ]
             )
 
@@ -148,8 +150,17 @@ def barplot_counts(
             figsize=(9, 5),
             width=0.8,
         )
+
+        title_text = metric.replace(
+            "_",
+            " ",
+        ).title()
+        title_text = title_text.replace(
+            "Pr",
+            "Pull Request (PR)",
+        )
         ax.set_title(
-            f"{metric.replace('_', ' ').title()}",
+            f"{title_text}",
             fontsize=14,
         )
         ax.set_xlabel(
@@ -239,7 +250,7 @@ def barplot_stacked(
             "Developer",
         )
         ax.set_title(
-            f"Percent Issues {title_text}",
+            f"Percent PRs {title_text}",
             fontsize=14,
         )
         ax.set_xlabel(
@@ -303,7 +314,7 @@ def lineplot_fast_response(
 ):
     df = report_data.copy()
 
-    # filter to TTR metrics
+    # Filter to TTR metrics only
     ttr_metrics = df[
         df["metric"].isin(
             [
@@ -316,14 +327,14 @@ def lineplot_fast_response(
         print("No TTR data available.")
         return
 
-    # get counts from opened_by_dev_status
+    # Get counts from opened_by_dev_status
     counts_df = df[df["metric"] == "opened_by_dev_status"]
 
     plot_data = []
 
     for metric, label in zip(
         ["overall_time_to_respond", "nondev_time_to_respond"],
-        ["All Issue", "Non-Developer Issues"],
+        ["All PRs", "Non-Developer PRs"],
     ):
         subset = ttr_metrics[ttr_metrics["metric"] == metric]
 
@@ -381,7 +392,7 @@ def lineplot_fast_response(
                 )
 
     ax.set_title(
-        "% Issues with Response Time < 2 Business Days",
+        "% PRs with Response Time < 2 Business Days",
         fontsize=14,
         pad=40,
     )
@@ -400,8 +411,6 @@ def lineplot_fast_response(
     plt.show()
 
 
-
-
 # longitudinal counts
 # -------------------------------------------
 def plot_longitudinal_counts(
@@ -413,17 +422,14 @@ def plot_longitudinal_counts(
     df = report_data.copy()
 
     # filter 'issue_staus' for specific period
-    df = df[(df["metric_period"] == metric_period) & (df["metric"] == "issues_status")]
+    df = df[(df["metric_period"] == metric_period) & (df["metric"] == "pr_status")]
 
     if df.empty:
         print(f"No data found for period: {metric_period}")
         return
 
     # ensure value column is numeric
-    df[value_col] = pd.to_numeric(
-        df[value_col],
-        errors="coerce",
-    )
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
 
     # determine date column
     # - use 'report_date' for rolling
@@ -439,7 +445,7 @@ def plot_longitudinal_counts(
         aggfunc="first",
     )
 
-    desired_order = ["New Issues", "Closed Issues", "Outstanding Issues"]
+    desired_order = ["Opened", "Closed", "Merged"]
     cols = [c for c in desired_order if c in pivot_table.columns]
     pivot_table = pivot_table[cols]
 
@@ -490,7 +496,7 @@ def plot_longitudinal_counts(
                 )
 
     ax.set_title(
-        f"{title_prefix}Issue Volume",
+        f"{title_prefix}PR Volume",
         fontsize=16,
     )
     ax.set_xlabel(
@@ -504,9 +510,9 @@ def plot_longitudinal_counts(
     ax.grid(
         axis="y",
         linestyle="--",
-        alpha=0.4,
+        alpha=0.3,
     )
-    ax.legend()
+    ax.legend(fontsize=12)
 
     plt.xticks(
         rotation=45,
@@ -551,8 +557,8 @@ def plot_longitudinal_ttr(
     )
 
     col_map = {
-        "overall_time_to_respond": "All Issues",
-        "nondev_time_to_respond": "Non-Dev Issues",
+        "overall_time_to_respond": "All PRs",
+        "nondev_time_to_respond": "Non-Dev PRs",
     }
     pivot_df = pivot_df.rename(columns=col_map)
 
@@ -575,8 +581,8 @@ def plot_longitudinal_ttr(
     )
 
     targets = [
-        "All Issues",
-        "Non-Dev Issues",
+        "All PRs",
+        "Non-Dev PRs",
     ]
     colors = [
         "#1f77b4",
@@ -596,7 +602,7 @@ def plot_longitudinal_ttr(
                 color=color,
             )
 
-            # add data labels
+            # add data labels at the ticks
             series = pivot_df[target]
             # find closest indices to the ticks
             nearest_idxs = series.index.get_indexer(ticks, method="nearest")
@@ -620,15 +626,21 @@ def plot_longitudinal_ttr(
                 "Percent",
                 fontsize=12,
             )
-            ax.set_ylim(0, 105)
+            ax.set_ylim(
+                0,
+                105,
+            )
             ax.grid(
                 axis="y",
                 linestyle="--",
                 alpha=0.4,
             )
-            ax.legend(loc="upper left")
+            ax.legend(
+                fontsize=12,
+                loc="upper left",
+            )
 
-            # set title on top plot only
+            # Only set title on top plot
             if i == 0:
                 title_prefix = "Rolling " if "rolling" in metric_period else "Monthly "
                 ax.set_title(
@@ -636,7 +648,7 @@ def plot_longitudinal_ttr(
                     fontsize=16,
                 )
 
-    # set ticks to the bottom axis only
+    # Apply ticks to the bottom axis
     import matplotlib.dates as mdates
 
     axes[-1].set_xticks(ticks)
@@ -653,11 +665,11 @@ def plot_longitudinal_ttr(
     plt.tight_layout()
     plt.show()
 
-
-def view_issues_metrics(
+def view_pr_metrics(
     end_date=False,
-    report_name="alltime_issues_report.pkl",
+    report_name="alltime_prs_report.pkl",
 ):
+
     if end_date is False:
         end_date = str(pd.Timestamp.now().date())
 
@@ -691,13 +703,14 @@ def view_issues_metrics(
     u24_report_path = os.path.join(
         "issues_metrics",
         "report_data",
-        "u24_issues_report.pkl"
+        "u24_prs_report.pkl"
     )
     with open(u24_report_path, "rb") as f:
         u24_report_data = pickle.load(f)
 
     # generate tables for each year
     # ---------------------------------
+
     for year in u24_report_data["grant_year"].unique():
         print(f"\n--- U24 Tables for {year} ---\n")
         year_data = u24_report_data[u24_report_data["grant_year"] == year]
@@ -731,10 +744,12 @@ def view_issues_metrics(
         "========================================\n"
     )
 
+    # monthly and rolling visualizations
+    # ---------------------------------
     monthly_report_path = os.path.join(
         "issues_metrics",
         "report_data",
-        "monthly_issues_report.pkl",
+        "monthly_prs_report.pkl",
     )
 
     if os.path.exists(monthly_report_path):
@@ -771,4 +786,4 @@ def view_issues_metrics(
 if __name__ == "__main__":
     # note: specify the end_date if viewing a historical report
     # otherwise, run date is used
-    view_issues_metrics()
+    view_pr_metrics()
