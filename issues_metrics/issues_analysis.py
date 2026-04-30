@@ -1383,7 +1383,7 @@ def run_main_reports(dev_usernames=None):
     # --> [DEV] for local testing
     if "dylandaniels" in os.getcwd():
         start_date = "2019-01-01"
-        end_date = "2025-12-01"
+        end_date = "2026-04-30"
     # --> [END DEV]
 
     alltime_report_dir = os.path.join(

@@ -8,7 +8,11 @@ on:
     # 08:00 AM Eastern year round
     - cron: "0 13 1 * *"
   workflow_dispatch:
-
+    inputs:
+      skip_fetch:
+        description: "skip fetching GitHub data"
+        type: boolean
+        default: false
 
 jobs:
   run-script:
@@ -33,9 +37,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install ./issues_metrics
 
-      - name: Download PR data and run analysis script
+      - name: Download issue/PR data and run analysis scripts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SKIP_FETCH: ${{ contains(github.event.head_commit.message,
+            '[skip fetch]') || github.event.inputs.skip_fetch == 'true' }}
         run: |
           python -m issues_metrics.run_reports
 
@@ -44,7 +50,16 @@ jobs:
           MONTH_YEAR=$(date +"%B %Y")
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
+
           git add issues_metrics/*.pkl
-          git commit -m "Monthly PR data upload for $MONTH_YEAR" \
+          git add issues_metrics/report_data/*.pkl
+
+          if [ "${{ github.event_name }}" == "schedule" ]; then
+            COMMIT_MESSAGE="Monthly issue/PR data upload for $MONTH_YEAR"
+          else
+            COMMIT_MESSAGE="Manual issue/PR run"
+          fi
+
+          git commit -m "$COMMIT_MESSAGE" \
             || echo "No changes to commit"
           git push
