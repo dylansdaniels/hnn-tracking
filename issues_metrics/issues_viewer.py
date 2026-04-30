@@ -16,6 +16,9 @@ from IPython.display import HTML, display
 
 sns.set_palette("Set2")
 
+if os.path.basename(os.getcwd()) == "issues_metrics":
+    os.chdir("..")
+
 # function to style html tables
 # ------------------------------
 def render_html_table(df):

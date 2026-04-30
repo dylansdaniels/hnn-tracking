@@ -25,6 +25,9 @@ from issues_metrics.issues_viewer import render_html_table
 
 sns.set_palette("Set2")
 
+if os.path.basename(os.getcwd()) == "issues_metrics":
+    os.chdir("..")
+
 
 def build_report_tables_from_pickle(
     report_data,

@@ -4,10 +4,14 @@ version = "0.1.0"
 dependencies = [
     "pandas",
     "requests",
-    "pandas-market-calendars",
     "matplotlib",
     "seaborn",
     "ipython",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ipykernel",
 ]
 
 [build-system]
