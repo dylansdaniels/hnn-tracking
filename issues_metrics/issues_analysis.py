@@ -1401,9 +1401,9 @@ def run_main_reports(dev_usernames=None):
         "u24_issues_report.pkl",
     )
 
-    print("\n" + "#" * 50)
+    print("\n" + "# " + "-" * 48)
     print("# Runing 'all time' report")
-    print("#" * 50, "\n")
+    print("# " + "-" * 48, "\n")
     processed_df = run_alltime_report(
         start_date=start_date,
         end_date=end_date,
@@ -1412,9 +1412,9 @@ def run_main_reports(dev_usernames=None):
         dev_usernames=dev_usernames,
     )
 
-    print("\n" + "#" * 50)
+    print("\n" + "# " + "-" * 48)
     print("# Runing 'monthly' report")
-    print("#" * 50, "\n")
+    print("# " + "-" * 48, "\n")
     _ = run_monthly_report(
         start_date=start_date,
         end_date=end_date,
@@ -1423,9 +1423,9 @@ def run_main_reports(dev_usernames=None):
         dev_usernames=dev_usernames,
     )
 
-    print("\n" + "#" * 50)
+    print("\n" + "# " + "-" * 48)
     print("# Runing 'U24' report")
-    print("#" * 50, "\n")
+    print("# " + "-" * 48, "\n")
     _ = run_u24_ttr_report(
         end_date=end_date,
         save_report_data=save_report_data,
