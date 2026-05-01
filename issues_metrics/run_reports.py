@@ -13,14 +13,14 @@ def main():
     if skip_fetch:
         print("Skip data fetching from GitHub")
     else:
-        print("\n"+"#"*50)
+        print("\n"+"#"*70)
         print("# Fetching issues data from GitHub")
-        print("#"*50,"\n")
+        print("#"*70,"\n")
         download_issues.download_issues()
 
-        print("\n"+"#"*50)
+        print("\n"+"#"*70)
         print("# Fetching PR data from GitHub")
-        print("#"*50,"\n")
+        print("#"*70,"\n")
         download_prs.download_prs()
 
     # Peprocess raw data for reporting
@@ -45,7 +45,7 @@ def main():
 
     print("\n"+"#"*70)
     print("# Processing issues data for report")
-    print("#"*50,"\n")
+    print("#"*70,"\n")
     try:
         issues_analysis.run_main_reports(dev_usernames=dev_usernames)
     except Exception as e:
@@ -53,7 +53,7 @@ def main():
 
     print("\n"+"#"*70)
     print("# Processing PR data for report")
-    print("#"*50,"\n")
+    print("#"*70,"\n")
     try:
         prs_analysis.run_main_reports(dev_usernames=dev_usernames)
     except Exception as e:
