@@ -1198,6 +1198,8 @@ def run_monthly_report(
     # get year-month
     tmp_df["year_month"] = pd.to_datetime(tmp_df["date_opened"]).dt.to_period("M")
 
+    # drop NaT values to prevent the loop from processing null periods,
+    # which may default to Unix Epoch (1970) in downstream calculations
     year_months = tmp_df["year_month"].sort_values().unique()
 
     # loop through year-months for monthly metrics
@@ -1383,7 +1385,7 @@ def run_main_reports(dev_usernames=None):
     # --> [DEV] for local testing
     if "dylandaniels" in os.getcwd():
         start_date = "2019-01-01"
-        end_date = "2026-04-30"
+        end_date = "2026-05-01"
     # --> [END DEV]
 
     alltime_report_dir = os.path.join(
