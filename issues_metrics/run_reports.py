@@ -14,12 +14,12 @@ def main():
         print("Skip data fetching from GitHub")
     else:
         print("\n"+"#"*50)
-        print("Fetching issues data from GitHub")
+        print("# Fetching issues data from GitHub")
         print("#"*50,"\n")
         download_issues.download_issues()
 
         print("\n"+"#"*50)
-        print("Fetching PR data from GitHub")
+        print("# Fetching PR data from GitHub")
         print("#"*50,"\n")
         download_prs.download_prs()
 
@@ -43,16 +43,16 @@ def main():
         "Chetank99",
     ]
 
-    print("\n"+"#"*50)
-    print("Processing issues data for report")
+    print("\n"+"#"*70)
+    print("# Processing issues data for report")
     print("#"*50,"\n")
     try:
         issues_analysis.run_main_reports(dev_usernames=dev_usernames)
     except Exception as e:
         print(f"Issues Analysis failed: {e}")
 
-    print("\n"+"#"*50)
-    print("Processing PR data for report")
+    print("\n"+"#"*70)
+    print("# Processing PR data for report")
     print("#"*50,"\n")
     try:
         prs_analysis.run_main_reports(dev_usernames=dev_usernames)
