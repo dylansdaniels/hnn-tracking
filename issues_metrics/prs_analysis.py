@@ -345,13 +345,13 @@ def prs_opened_by_users(
     else:
         by_col = "username"
 
-    prs_by_user = df[
+    prs_by_user = df.drop_duplicates(subset=["number"])[
         [
             "pr_title",
             "date_opened",
             by_col,
         ]
-    ].drop_duplicates()
+    ]
 
     prs_by_user = prs_by_user.groupby(by_col).count().reset_index()
     prs_by_user = prs_by_user[
