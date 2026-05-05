@@ -615,13 +615,13 @@ def issues_opened_by_users(
     else:
         by_col = "username"
 
-    issues_by_user = df[
+    issues_by_user = df.drop_duplicates(subset=["number"])[
         [
             "issue_name",
             "date_opened",
-            by_col,
+            by_col
         ]
-    ].drop_duplicates()
+    ]
 
     issues_by_user = issues_by_user.groupby(by_col).count().reset_index()
     issues_by_user = issues_by_user[

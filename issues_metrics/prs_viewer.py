@@ -345,8 +345,8 @@ def lineplot_fast_response(
         subset = subset[subset["grant_year"].isin(grant_years)]
 
         for _, row in subset.iterrows():
-            if row["indicator_value"] == "< 02 days":
-                percent = row["value"]
+            if row["indicator_value"] == "03 - 14 days":
+                percent = row["sub_value"]
 
                 indicator_value_map = {
                     "overall_time_to_respond": "Total",
@@ -395,7 +395,7 @@ def lineplot_fast_response(
                 )
 
     ax.set_title(
-        "% PRs with Response Time < 2 Business Days",
+        "% PRs with Response Time < 2 Business Weeks",
         fontsize=14,
         pad=40,
     )
@@ -412,6 +412,156 @@ def lineplot_fast_response(
     ax.legend()
     plt.tight_layout()
     plt.show()
+
+
+# combined lineplot with TTR and stacked barplot with counts
+def ttr_barplot_lineplot(
+    report_data,
+    grant_years=[
+        "year 1",
+        "year 2",
+        "year 3",
+    ],
+    sns_palette=False,
+):
+
+    if sns_palette:
+        try:
+            sns.set_palette(sns_palette)
+        except Exception as e:
+            print(f"Unable to set palette: {e}")
+
+    df = report_data.copy()
+
+    # Filter to TTR metrics only
+    ttr_metrics = df[
+        df["metric"].isin(
+            [
+                "overall_time_to_respond",
+                "nondev_time_to_respond",
+            ]
+        )
+    ]
+    if ttr_metrics.empty:
+        print("No TTR data available.")
+        return
+
+    # Get counts from opened_by_dev_status
+    counts_df = df[df["metric"] == "opened_by_dev_status"]
+
+    plot_data = []
+
+    for metric, label in zip(
+        ["overall_time_to_respond", "nondev_time_to_respond"],
+        ["All PRs", "Non-Developer PRs"],
+    ):
+        subset = ttr_metrics[ttr_metrics["metric"] == metric]
+
+        # keep only the specified grant_years
+        subset = subset[subset["grant_year"].isin(grant_years)]
+
+        for _, row in subset.iterrows():
+            if row["indicator_value"] == "03 - 14 days":
+                percent = row["sub_value"]
+
+                indicator_value_map = {
+                    "overall_time_to_respond": "Total",
+                    "nondev_time_to_respond": "Non-Developer",
+                }
+                count_row = counts_df[
+                    (counts_df["grant_year"] == row["grant_year"])
+                    & (counts_df["indicator_value"] == indicator_value_map[metric])
+                ]
+                count = count_row["value"].values[0] if not count_row.empty else None
+
+                plot_data.append(
+                    {
+                        "grant_year": row["grant_year"],
+                        "percent_fast_response": float(percent),
+                        "count": int(count) if pd.notna(count) else None,
+                        "group": label,
+                    }
+                )
+
+    plot_df = pd.DataFrame(plot_data)
+    plot_df = plot_df.sort_values("grant_year")
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax2 = ax.twinx()
+
+    for group, group_df in plot_df.groupby("group"):
+        x = group_df["grant_year"]
+        y = group_df["percent_fast_response"]
+
+        ax.plot(
+            x,
+            y,
+            marker="o",
+            label=group,
+        )
+
+        # add data labels
+        for xi, yi, count in zip(x, y, group_df["count"]):
+            if count is not None:
+                ax.text(
+                    xi,
+                    yi + 5,
+                    f"{yi:.0f}%",
+                    ha="center",
+                    va="top",
+                    fontsize=10,
+                    color="black",
+                )
+
+        bars = ax2.bar(
+            group_df["grant_year"],
+            group_df["count"],
+            alpha=0.45,
+        )
+
+        for bar in bars:
+            height=bar.get_height()
+            x = bar.get_x() + bar.get_width() / 7
+
+            ax2.text(
+                x,
+                height - 7,
+                f"n={int(height)}",
+                ha="center",
+                va="bottom",
+            )
+
+        # change layer order
+        ax2.set_zorder(0)
+        ax.set_zorder(1)
+
+        # ensure ax background doesn't hide ax2
+        ax.patch.set_alpha(0)
+
+    ax.set_title(
+        "% PRs with Response Time < 2 Business Weeks (Left, Lineplot) \n"
+        "Count of PRs Opened by Type (Right, Barplot)",
+        fontsize=14,
+        pad=20,
+    )
+    ax.set_ylabel(
+        "Percent",
+        fontsize=12,
+    )
+    ax2.set_ylabel(
+        "Count",
+        fontsize=12,
+    )
+    ax.set_ylim(0, 100)
+    ax.grid(
+        axis="y",
+        linestyle="--",
+        alpha=0.3,
+    )
+    ax.legend()
+    plt.tight_layout()
+    plt.show()
+
 
 
 # longitudinal counts
@@ -728,6 +878,10 @@ def view_pr_metrics(
     barplot_counts(u24_report_data)
     barplot_stacked(u24_report_data)
     lineplot_fast_response(u24_report_data)
+    ttr_barplot_lineplot(
+        u24_report_data,
+        sns_palette="Set1"
+    )
 
     print(
         "\n"
@@ -790,3 +944,5 @@ if __name__ == "__main__":
     # note: specify the end_date if viewing a historical report
     # otherwise, run date is used
     view_pr_metrics()
+
+# %%
